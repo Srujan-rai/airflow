@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import datetime
 import itertools
+import logging
 import os
 import random
 import selectors
@@ -1156,6 +1157,50 @@ class TestTriggerRunner:
 
         assert len(first_call.events) == 3
         assert len(second_call.events) == 2
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param(
+                {"event": "hello"},
+                id="missing-level-key",
+            ),
+            pytest.param(
+                {"event": "hello", "level": "bogus_unknown_level"},
+                id="unknown-level-value",
+            ),
+        ],
+    )
+    def test_process_log_messages_tolerates_bad_level(self, payload):
+        """Log events with missing or unknown 'level' must not raise and must log at WARNING."""
+        import json
+
+        trigger_runner = TriggerRunner()
+        mock_log = MagicMock()
+        with patch("structlog.get_logger", return_value=mock_log):
+            gen = trigger_runner._process_log_messages_from_subprocess()
+            next(gen)  # advance to yield
+            gen.send(json.dumps(payload).encode())
+
+        mock_log.log.assert_called_once()
+        assert mock_log.log.call_args[0][0] == logging.WARNING
+
+    def test_process_log_messages_valid_event_processed(self):
+        """Log events with a valid 'level' key are passed to the logger."""
+        import json
+
+        trigger_runner = TriggerRunner()
+        mock_log = MagicMock()
+        with patch("structlog.get_logger", return_value=mock_log):
+            gen = trigger_runner._process_log_messages_from_subprocess()
+            next(gen)
+            gen.send(json.dumps({"event": "test message", "level": "info"}).encode())
+
+        mock_log.log.assert_called_once()
+        args = mock_log.log.call_args
+        # Positional args: (numeric_level, event_message)
+        assert args[0][0] == 20  # INFO level
+        assert args[0][1] == "test message"
 
 
 @pytest.mark.asyncio
